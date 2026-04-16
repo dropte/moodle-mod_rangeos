@@ -2,15 +2,13 @@
 .DS_Store
 ._*
 
-# Claude Code
+# Editor / tooling
 .claude/
 CLAUDE.md
-
-# Node (build tooling)
-node_modules/
-
-# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+
+# Node (build tooling)
+node_modules/
