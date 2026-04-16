@@ -259,7 +259,7 @@ const showCreateClassModal = () => {
     const scenarioSelect = document.getElementById(modalId + '-scenario');
     const scenarioDetail = document.getElementById(modalId + '-scenario-detail');
     // eslint-disable-next-line no-undef
-    const jq = $;
+    const jq = window.jQuery;
 
     // Load local activities with mapped scenarios.
     Ajax.call([{
@@ -345,11 +345,9 @@ const showCreateClassModal = () => {
             jq(modalEl).modal('hide');
             Notification.addNotification({
                 message: 'Class "' + classId + '" has been queued for deployment with ' + count
-                    + ' seats. It may take a few minutes for instances to appear.',
+                    + ' seats. Deployment may take several minutes — refresh the page to check progress.',
                 type: 'success',
             });
-            // Delay reload to let the user see the notification.
-            setTimeout(() => window.location.reload(), 3000);
         }).catch((err) => {
             saveBtn.disabled = false;
             saveBtn.textContent = 'Create';
@@ -402,7 +400,7 @@ const showAddSeatsModal = (className, knownScenarioId) => {
 
     const modalEl = document.getElementById(modalId);
     // eslint-disable-next-line no-undef
-    const jq = $;
+    const jq = window.jQuery;
 
     jq(modalEl).modal('show');
 
@@ -442,7 +440,11 @@ const showAddSeatsModal = (className, knownScenarioId) => {
             },
         }])[0].then(() => {
             jq(modalEl).modal('hide');
-            Notification.addNotification({message: count + ' seats added to ' + className, type: 'success'});
+            Notification.addNotification({
+                message: count + ' seats queued for ' + className
+                    + '. Deployment may take several minutes — refresh to check progress.',
+                type: 'success',
+            });
             // Refresh instance counts.
             document.querySelectorAll('.instance-count[data-classname="' + className + '"]').forEach((el) => {
                 loadInstanceCount(className, el);
