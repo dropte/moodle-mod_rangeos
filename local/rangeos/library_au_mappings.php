@@ -31,9 +31,13 @@ require_login();
 $context = context_system::instance();
 require_capability('local/rangeos:manageaumappings', $context);
 
+// Package ID is the selected package.
 $packageid = optional_param('packageid', 0, PARAM_INT);
 $envid = optional_param('envid', 0, PARAM_INT);
 $showall = optional_param('showall', 0, PARAM_INT);
+// Adding pagination CCUI 2910
+$currentpage = optional_param('page', 0, PARAM_INT);
+$totalpages = 1; // default, gets overwritten in all-mappings mode
 
 $PAGE->set_context($context);
 $PAGE->set_url('/local/rangeos/library_au_mappings.php', ['packageid' => $packageid, 'envid' => $envid]);
@@ -64,6 +68,7 @@ $aus = []; // auid => {auid, title, url, versionid}
 $packagetitle = '';
 $versionid = 0;
 
+
 if ($packageid > 0) {
     // Package-filtered mode: show AUs from this specific package.
     $package = $DB->get_record('cmi5_packages', ['id' => $packageid]);
@@ -73,6 +78,7 @@ if ($packageid > 0) {
         if ($versionid) {
             $packageaus = $DB->get_records('cmi5_package_aus', ['versionid' => $versionid], 'sortorder ASC');
             foreach ($packageaus as $pau) {
+                //TODO - make AUs bypackage id (packacge au is by au id)
                 $aus[$pau->auid] = $pau;
             }
         }
@@ -86,9 +92,11 @@ $error = '';
 if ($envid > 0) {
     try {
         $client = \local_rangeos\api_client::from_environment($envid);
-
         if ($packageid > 0 && !empty($aus)) {
+            debugging("The package id here - " . $packageid, DEBUG_DEVELOPER);
+            $start = microtime(true);
             // Package mode: fetch mappings per AU.
+            // Building a lookup table of scenario UUID
             $scenariouuids = [];
             foreach ($aus as $au) {
                 $mapping = $client->get_au_mapping($au->auid);
@@ -102,14 +110,23 @@ if ($envid > 0) {
                     }
                 }
             }
+            $end = microtime(true);
+            debugging("looping through aus took " . ($end - $start) . " seconds", DEBUG_DEVELOPER);
         } else {
             // All-mappings mode: fetch all AU mappings from the API.
+            debugging("We are in all mappings mode", DEBUG_DEVELOPER);
+            $start_aumappings = microtime(true);
             $scenariouuids = [];
             $page = 0;
-            do {
+          //  do {
+                //Grabbing every single mapping
+                //$response = $client->list_au_mappings([
+                //    'page' => $page,
+                //    'pageSize' => 100,
+                //]);
                 $response = $client->list_au_mappings([
-                    'page' => $page,
-                    'pageSize' => 100,
+                    'page' => $currentpage,
+                    'pageSize' => 20,
                 ]);
                 $items = $response['data'] ?? $response['items'] ?? $response;
                 foreach ($items as $m) {
@@ -118,8 +135,10 @@ if ($envid > 0) {
                     if (!$auid) {
                         continue;
                     }
+                    //Create lookup table of AU mappings by auId. 
                     $aumappings[$auid] = $m;
                     // Build a synthetic AU entry if we don't already have one.
+                    // This is another AU mapping lookup table, with slightly different properties.
                     if (!isset($aus[$auid])) {
                         $aus[$auid] = (object) [
                             'auid' => $auid,
@@ -128,6 +147,7 @@ if ($envid > 0) {
                             'versionid' => 0,
                         ];
                     }
+                    // Loop through each mapping, add scenarios to the scenario lookup table.
                     foreach ($m['scenarios'] ?? [] as $s) {
                         $uuid = is_array($s) ? ($s['uuid'] ?? $s['id'] ?? '') : (string) $s;
                         if ($uuid) {
@@ -137,13 +157,19 @@ if ($envid > 0) {
                 }
                 $page++;
                 $totalpages = $response['totalPages'] ?? 1;
-            } while ($page < $totalpages);
+          //  } while ($page < $totalpages);
+            debugging("AU mappings fetch took " . (microtime(true) - $start_aumappings) . " seconds", DEBUG_DEVELOPER);
         }
 
         // Resolve scenario UUIDs to names.
+        // May be an issue, calling ALL scenarios
+        // Can we time this? How much time does this take.
+        // instead of pullng all the pages and looping, you could gra each scenario and get name out of response.
         if (!empty($scenariouuids)) {
             $scenariopage = 0;
-            do {
+            $start = microtime(true);
+/*             do {
+                debugging("Let's get the list of scenarios - page " . $scenariopage, DEBUG_DEVELOPER);
                 $scenarioresponse = $client->list_content_scenarios([
                     'page' => $scenariopage,
                     'pageSize' => 100,
@@ -151,6 +177,7 @@ if ($envid > 0) {
                 foreach ($scenarioresponse['data'] ?? [] as $s) {
                     $s = (array) $s;
                     $uuid = $s['uuid'] ?? '';
+                    //does this scenario apply to this course
                     if ($uuid && isset($scenariouuids[$uuid])) {
                         $scenariolookup[$uuid] = $s['name'] ?? '';
                     }
@@ -158,10 +185,14 @@ if ($envid > 0) {
                 if (count($scenariolookup) >= count($scenariouuids)) {
                     break;
                 }
+                
                 $scenariopage++;
                 $scenariototal = $scenarioresponse['totalPages'] ?? 1;
-            } while ($scenariopage < $scenariototal);
+            } while ($scenariopage < $scenariototal); */
+            $end = microtime(true);
+            debugging("looping through scenarios took " . ($end - $start) . " seconds", DEBUG_DEVELOPER);
         }
+
     } catch (\Exception $e) {
         $error = $e->getMessage();
     }
@@ -347,6 +378,7 @@ $baseurl = (new moodle_url('/local/rangeos/library_au_mappings.php'))->out(false
 
 $hiddencount = $totalaumappings - count($audata);
 
+
 echo $OUTPUT->render_from_template('local_rangeos/library_au_mappings', [
     'environments' => $envoptions,
     'hasenvironments' => !empty($envoptions),
@@ -367,6 +399,13 @@ echo $OUTPUT->render_from_template('local_rangeos/library_au_mappings', [
     'haserror' => !empty($error),
     'baseurl' => $baseurl,
     'libraryurl' => (new moodle_url('/mod/cmi5/library.php'))->out(false),
+    'currentpage' => $currentpage,
+    'showpagination' => ($packageid === 0 && $totalpages > 1),
+    'totalpages' => $totalpages,
+    'hasprev' => $currentpage > 0,
+    'hasnext' => $currentpage < ($totalpages - 1),
+    'prevpage' => $currentpage - 1,
+    'nextpage' => $currentpage + 1,
 ]);
 
 echo $OUTPUT->footer();

@@ -218,6 +218,28 @@
     </div>
     {{/haserror}}
     {{/hasaus}}
+    {{#showpagination}}
+
+    <div class="d-flex align-items-center justify-content-between mt-3">
+        <div>
+            {{#str}}page, local_rangeos{{/str}} {{currentpage}} / {{totalpages}}
+        </div>
+        <div>
+            {{#hasprev}}
+            <a href="{{baseurl}}?envid={{envid}}&packageid={{packageid}}&page={{prevpage}}"
+            class="btn btn-sm btn-outline-secondary mr-1">
+                &laquo; Previous
+            </a>
+            {{/hasprev}}
+            {{#hasnext}}
+            <a href="{{baseurl}}?envid={{envid}}&packageid={{packageid}}&page={{nextpage}}"
+            class="btn btn-sm btn-outline-secondary">
+                Next &raquo;
+            </a>
+            {{/hasnext}}
+        </div>
+    </div>
+    {{/showpagination}}
 </div>
 
 <script>
@@ -231,16 +253,16 @@ document.addEventListener('DOMContentLoaded', function() {
         var envid = envSelect ? envSelect.value : '';
         var url = base + sep + 'envid=' + envid;
         for (var k in params) {
-            if (params[k]) {
-                url += '&' + k + '=' + params[k];
+                if (params[k] !== undefined && params[k] !== null) {
+                    url += '&' + k + '=' + params[k];
+                }
             }
-        }
         return url;
     }
 
     if (pkgSelect) {
         pkgSelect.addEventListener('change', function() {
-            window.location.href = buildUrl({packageid: pkgSelect.value});
+            window.location.href = buildUrl({packageid: pkgSelect.value, page: 0});
         });
     }
 
@@ -250,7 +272,7 @@ document.addEventListener('DOMContentLoaded', function() {
             e.preventDefault();
             var showAll = toggleBtn.getAttribute('data-showall');
             var packageid = pkgSelect ? pkgSelect.value : '';
-            window.location.href = buildUrl({packageid: packageid, showall: showAll});
+            window.location.href = buildUrl({packageid: packageid, showall: showAll, page: 0});
         });
     }
 });
