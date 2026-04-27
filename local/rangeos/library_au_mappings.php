@@ -37,6 +37,7 @@ $envid = optional_param('envid', 0, PARAM_INT);
 $showall = optional_param('showall', 0, PARAM_INT);
 // Adding pagination CCUI 2910
 $currentpage = optional_param('page', 0, PARAM_INT);
+$pagesize = optional_param('perpage', 20, PARAM_INT);
 $totalpages = 1; // default, gets overwritten in all-mappings mode
 
 $PAGE->set_context($context);
@@ -90,6 +91,7 @@ $aumappings = []; // auid => mapping data.
 $scenariolookup = []; // uuid => name.
 $scenariouuids = [];
 $client = null;
+$totalitems = null;
 $error = '';
 if ($envid > 0) {
     try {
@@ -117,7 +119,7 @@ if ($envid > 0) {
                 //Grabbing upto 20 mappings
                 $response = $client->list_au_mappings([
                     'page' => $currentpage,
-                    'pageSize' => 20,
+                    'pageSize' => $pagesize,
                 ]);
                 debugging("API response keys: " . json_encode(array_keys((array)$response)) . " | totalPages: " . json_encode($response['totalPages'] ?? 'MISSING'), DEBUG_DEVELOPER);
                 $items = $response['data'] ?? $response['items'] ?? $response;
@@ -142,6 +144,7 @@ if ($envid > 0) {
                 }
                 $page++;
                 $totalpages = $response['totalPages'] ?? 1;
+                $totalitems = $response['totalCount'] ?? $response['total'] ?? null;
 
             debugging("AU mappings fetch took " . (microtime(true) - $start_aumappings) . " seconds", DEBUG_DEVELOPER);
             debugging("Is the new code making it?", DEBUG_DEVELOPER);
@@ -370,17 +373,33 @@ $baseurl = (new moodle_url('/local/rangeos/library_au_mappings.php'))->out(false
 
 $hiddencount = $totalaumappings - count($audata);
 
-// Paginate $audata (always 20 per page). The API may return more items than pageSize if it
-// ignores the parameter, so we always PHP-slice as a safety net. In all-mappings mode,
-// $totalpages from the API is used when available; otherwise we derive it from the data count.
-$pagesize = 20;
+// Paginate $audata. The API may return more items than pageSize if it ignores the parameter,
+// so we always PHP-slice as a safety net.
 $totalaudata = count($audata);
 if ($packageid === 0 && $totalpages <= 1 && $totalaudata > $pagesize) {
     // API didn't paginate — derive totalpages from actual item count.
     $totalpages = (int) ceil($totalaudata / $pagesize);
 }
+if ($totalitems === null) {
+    $totalitems = $totalpages * $pagesize;
+}
 $audata = array_slice($audata, $currentpage * $pagesize, $pagesize);
+$pagecount = count($audata);
+$pagefirst = $currentpage * $pagesize + 1;
+$pagelast = $pagefirst + $pagecount - 1;
 
+
+$pagingurl = new moodle_url('/local/rangeos/library_au_mappings.php', [
+    'envid'     => $envid,
+    'packageid' => $packageid,
+    'showall'   => $showall,
+    'perpage'   => $pagesize,
+]);
+
+$pagesizeoptions = [];
+foreach ([20, 50, 100] as $size) {
+    $pagesizeoptions[] = ['size' => $size, 'selected' => ($size === $pagesize)];
+}
 
 echo $OUTPUT->render_from_template('local_rangeos/library_au_mappings', [
     'environments' => $envoptions,
@@ -402,14 +421,25 @@ echo $OUTPUT->render_from_template('local_rangeos/library_au_mappings', [
     'haserror' => !empty($error),
     'baseurl' => $baseurl,
     'libraryurl' => (new moodle_url('/mod/cmi5/library.php'))->out(false),
-    'currentpage' => $currentpage,
-    'currentpagedisplay' => $currentpage + 1,
-    'showpagination' => ($totalpages > 1),
-    'totalpages' => $totalpages,
-    'hasprev' => $currentpage > 0,
-    'hasnext' => $currentpage < ($totalpages - 1),
-    'prevpage' => $currentpage - 1,
-    'nextpage' => $currentpage + 1,
+    'perpage' => $pagesize,
 ]);
 
+$perpageselect = html_writer::tag('label',
+    get_string('perpage', 'moodle') . ':',
+    ['for' => 'rangeos-perpage-select', 'class' => 'mr-2 mb-0 small text-muted']
+);
+$perpageselect .= html_writer::select(
+    [20 => '20', 50 => '50', 100 => '100'],
+    'perpage',
+    $pagesize,
+    false,
+    ['id' => 'rangeos-perpage-select', 'class' => 'custom-select custom-select-sm w-auto', 'style' => 'vertical-align: middle;']
+);
+
+echo html_writer::tag('style', '.pagination { margin-bottom: 0; }');
+echo html_writer::div(
+    html_writer::div($perpageselect, 'd-flex align-items-center mr-3') .
+    html_writer::div($OUTPUT->paging_bar($totalitems, $currentpage, $pagesize, $pagingurl), 'd-flex align-items-center'),
+    'd-flex align-items-center justify-content-center mt-3'
+);
 echo $OUTPUT->footer();
