@@ -40,6 +40,117 @@ $currentpage = optional_param('page', 0, PARAM_INT);
 $pagesize = optional_param('perpage', 20, PARAM_INT);
 $totalpages = 1; // default, gets overwritten in all-mappings mode
 
+// Handle bulk map-all-defaults action.
+$mapresults = null;
+if (optional_param('action', '', PARAM_ALPHA) === 'mapalldefaults') {
+    require_sesskey();
+
+    // Resolve envid to a usable value.
+    $actionenvid = $envid;
+    if ($actionenvid === 0) {
+        $default = environment_manager::get_default_environment();
+        if ($default) {
+            $actionenvid = $default->id;
+            $envid = $actionenvid;
+        }
+    }
+
+    $mapresults = ['created' => [], 'failed' => [], 'skipped' => 0];
+
+    if ($actionenvid > 0) {
+        $client = \local_rangeos\api_client::from_environment($actionenvid);
+
+        // Fetch all existing AU mappings to know which are already mapped.
+        $mappedauids = [];
+        $mappage = 0;
+        do {
+            $mapresponse = $client->list_au_mappings(['page' => $mappage, 'pageSize' => 100]);
+            foreach ($mapresponse['data'] ?? $mapresponse['items'] ?? $mapresponse as $m) {
+                $m = (array) $m;
+                $auid = $m['auId'] ?? $m['auid'] ?? '';
+                if ($auid) {
+                    $mappedauids[$auid] = true;
+                }
+            }
+            $mappage++;
+        } while ($mappage < ($mapresponse['totalPages'] ?? 1));
+
+        // Fetch all content scenarios for a name → UUID lookup.
+        $scenariobynamelookup = [];
+        $scpage = 0;
+        do {
+            $scresponse = $client->list_content_scenarios(['page' => $scpage, 'pageSize' => 100]);
+            foreach ($scresponse['data'] ?? [] as $s) {
+                $s = (array) $s;
+                if (!empty($s['name']) && !empty($s['uuid'])) {
+                    $scenariobynamelookup[$s['name']] = $s['uuid'];
+                }
+            }
+            $scpage++;
+        } while ($scpage < ($scresponse['totalPages'] ?? 1));
+
+        // Walk every package's latest-version AUs.
+        $packages = $DB->get_records('cmi5_packages', [], '', 'id, title, latestversion');
+        $seenauids = [];
+        foreach ($packages as $package) {
+            if (empty($package->latestversion)) {
+                continue;
+            }
+            $packageaus = $DB->get_records('cmi5_package_aus', ['versionid' => $package->latestversion], 'sortorder ASC');
+            foreach ($packageaus as $pau) {
+                $auid = $pau->auid ?? '';
+                if (!$auid || isset($seenauids[$auid])) {
+                    continue;
+                }
+                $seenauids[$auid] = true;
+
+                if (empty($pau->url)) {
+                    continue;
+                }
+                $config = content_patcher::get_au_config((int) $package->latestversion, $pau->url);
+                if ($config === null || empty($config['rangeosScenarioName'])) {
+                    continue;
+                }
+                $scenarioname = $config['rangeosScenarioName'];
+                $autitle = format_string($pau->title ?? $auid);
+
+                if (isset($mappedauids[$auid])) {
+                    $mapresults['skipped']++;
+                    continue;
+                }
+                if (!isset($scenariobynamelookup[$scenarioname])) {
+                    $mapresults['failed'][] = [
+                        'title'        => $autitle,
+                        'scenarioname' => $scenarioname,
+                        'reason'       => 'Scenario not found in this environment',
+                    ];
+                    continue;
+                }
+
+                try {
+                    $client->create_au_mapping($auid, $pau->title ?? '', [$scenariobynamelookup[$scenarioname]]);
+                    $mapresults['created'][] = [
+                        'title'        => $autitle,
+                        'scenarioname' => $scenarioname,
+                    ];
+                    $mappedauids[$auid] = true;
+                } catch (\Exception $e) {
+                    $mapresults['failed'][] = [
+                        'title'        => $autitle,
+                        'scenarioname' => $scenarioname,
+                        'reason'       => $e->getMessage(),
+                    ];
+                }
+            }
+        }
+    }
+
+    $mapresults['hascreated'] = !empty($mapresults['created']);
+    $mapresults['hasfailed']  = !empty($mapresults['failed']);
+    $mapresults['createdcount'] = count($mapresults['created']);
+    $mapresults['failedcount']  = count($mapresults['failed']);
+}
+
 $PAGE->set_context($context);
 $PAGE->set_url('/local/rangeos/library_au_mappings.php', ['packageid' => $packageid, 'envid' => $envid]);
 $PAGE->set_pagelayout('admin');
@@ -95,51 +206,94 @@ if ($envid > 0) {
     try {
         $client = \local_rangeos\api_client::from_environment($envid);
         if ($packageid > 0 && !empty($aus)) {
-            // Package mode: fetch mappings per AU.
-            // Building a lookup table of scenario UUID
+            // Package mode: fetch all mappings in bulk then filter to this package's AUs.
+            // This replaces one HTTP call per AU with a small number of paginated calls.
             $scenariouuids = [];
-            foreach ($aus as $au) {
-                $mapping = $client->get_au_mapping($au->auid);
-                if ($mapping) {
-                    $aumappings[$au->auid] = $mapping;
+            $bulkpage = 0;
+            do {
+                $bulkresponse = $client->list_au_mappings(['page' => $bulkpage, 'pageSize' => 100]);
+                $bulkitems = $bulkresponse['data'] ?? $bulkresponse['items'] ?? $bulkresponse;
+                foreach ($bulkitems as $m) {
+                    $m = (array) $m;
+                    $auid = $m['auId'] ?? $m['auid'] ?? '';
+                    if (!$auid || !isset($aus[$auid])) {
+                        continue;
+                    }
+                    $aumappings[$auid] = $m;
+                    foreach ($m['scenarios'] ?? [] as $s) {
+                        $uuid = is_array($s) ? ($s['uuid'] ?? $s['id'] ?? '') : (string) $s;
+                        if ($uuid) {
+                            $scenariouuids[$uuid] = true;
+                        }
+                    }
                 }
-            }
+                $bulkpage++;
+            } while ($bulkpage < ($bulkresponse['totalPages'] ?? 1));
         } else {
             // All-mappings mode: fetch all AU mappings from the API.
             $start_aumappings = microtime(true);
             $scenariouuids = [];
             $page = 0;
-                //Grab up to the selected pagesize.
-                $response = $client->list_au_mappings([
-                    'page' => $currentpage,
-                    'pageSize' => $pagesize,
+            //Grab up to the selected pagesize.
+            $response = $client->list_au_mappings([
+                'page' => $currentpage,
+                'pageSize' => $pagesize,
+            ]);
+            $items = $response['data'] ?? $response['items'] ?? $response;
+            foreach ($items as $m) {
+                $m = (array) $m;
+                $auid = $m['auId'] ?? $m['auid'] ?? '';
+                if (!$auid) {
+                    continue;
+                }
+                //Create lookup table of AU mappings by auId. 
+                $aumappings[$auid] = $m;
+                // Build a synthetic AU entry if we don't already have one.
+                // This is another AU mapping lookup table, with slightly different properties.
+                if (!isset($aus[$auid])) {
+                    $aus[$auid] = (object) [
+                        'auid' => $auid,
+                        'title' => $m['name'] ?? '',
+                        'url' => '',
+                        'versionid' => 0,
+                    ];
+                }
+            }
+            $page++;
+            $totalpages = $response['totalPages'] ?? 1;
+            $totalitems = $response['totalCount'] ?? $response['total'] ?? null;
+        }
+
+        // Fetch scenarios to resolve UUID→name for badge display, and in package mode
+        // also build name→UUID for the default-scenario existence check.
+        // In all-mappings mode we stop as soon as all referenced UUIDs are resolved.
+        $scenariobynamelookup = []; // name => uuid (package mode only)
+        if (!empty($scenariouuids) || $packageid > 0) {
+            $scenariopage = 0;
+            do {
+                $scenarioresponse = $client->list_content_scenarios([
+                    'page' => $scenariopage,
+                    'pageSize' => 100,
                 ]);
-                $items = $response['data'] ?? $response['items'] ?? $response;
-                foreach ($items as $m) {
-                    $m = (array) $m;
-                    $auid = $m['auId'] ?? $m['auid'] ?? '';
-                    if (!$auid) {
-                        continue;
+                foreach ($scenarioresponse['data'] ?? [] as $s) {
+                    $s = (array) $s;
+                    $uuid = $s['uuid'] ?? '';
+                    $name = $s['name'] ?? '';
+                    if ($uuid && isset($scenariouuids[$uuid])) {
+                        $scenariolookup[$uuid] = $name;
                     }
-                    //Create lookup table of AU mappings by auId. 
-                    $aumappings[$auid] = $m;
-                    // Build a synthetic AU entry if we don't already have one.
-                    // This is another AU mapping lookup table, with slightly different properties.
-                    if (!isset($aus[$auid])) {
-                        $aus[$auid] = (object) [
-                            'auid' => $auid,
-                            'title' => $m['name'] ?? '',
-                            'url' => '',
-                            'versionid' => 0,
-                        ];
+                    if ($packageid > 0 && $name && $uuid) {
+                        $scenariobynamelookup[$name] = $uuid;
                     }
                 }
-                $page++;
-                $totalpages = $response['totalPages'] ?? 1;
-                $totalitems = $response['totalCount'] ?? $response['total'] ?? null;
-
-            }
-
+                $scenariopage++;
+                $scenariototal = $scenarioresponse['totalPages'] ?? 1;
+                // In all-mappings mode, stop early once all referenced UUIDs are resolved.
+                if ($packageid === 0 && count($scenariolookup) >= count($scenariouuids)) {
+                    break;
+                }
+            } while ($scenariopage < $scenariototal);
+        }
     } catch (\Exception $e) {
         $error = $e->getMessage();
     }
@@ -309,12 +463,15 @@ foreach ($aus as $auid => $au) {
         $auidshort = '.../' . end($parts);
     }
 
+    $defaultscenariomissing = !empty($scenarioname) && !isset($scenariobynamelookup[$scenarioname]);
+
     $audata[] = [
         'auid' => $au->auid,
         'auid_short' => $auidshort,
         'title' => $au->title,
         'israngeos' => $israngeos,
         'scenarioname' => $scenarioname,
+        'defaultscenariomissing' => $defaultscenariomissing,
         'ismapped' => !empty($scenarios),
         'scenario_badges' => $scenariobadges,
         'scenario_count' => count($scenarios),
@@ -406,10 +563,19 @@ echo $OUTPUT->render_from_template('local_rangeos/library_au_mappings', [
     'haserror' => !empty($error),
     'baseurl' => $baseurl,
     'libraryurl' => (new moodle_url('/mod/cmi5/library.php'))->out(false),
+    'mapresults' => $mapresults,
+    'hasmapresults' => ($mapresults !== null),
+    'mapallurl' => (new moodle_url('/local/rangeos/library_au_mappings.php', [
+        'envid' => $envid,
+        'packageid' => $packageid,
+        'action' => 'mapalldefaults',
+        'sesskey' => sesskey(),
+    ]))->out(false),
     'perpage' => $pagesize,
 ]);
 
-$perpageselect = html_writer::tag('label',
+$perpageselect = html_writer::tag(
+    'label',
     get_string('perpage', 'moodle') . ':',
     ['for' => 'rangeos-perpage-select', 'class' => 'mr-2 mb-0 small text-muted']
 );
@@ -426,7 +592,7 @@ if ($pagecount >= $pagesize || $currentpage > 0) {
     echo html_writer::tag('style', '.pagination { margin-bottom: 0; }');
     echo html_writer::div(
         html_writer::div($perpageselect, 'd-flex align-items-center mr-3') .
-        html_writer::div($OUTPUT->paging_bar($totalitems, $currentpage, $pagesize, $pagingurl), 'd-flex align-items-center'),
+            html_writer::div($OUTPUT->paging_bar($totalitems, $currentpage, $pagesize, $pagingurl), 'd-flex align-items-center'),
         'd-flex align-items-center justify-content-center mt-3'
     );
 }
