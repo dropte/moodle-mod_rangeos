@@ -150,7 +150,7 @@ $string['loading'] = 'Loading...';
 $string['addseats'] = 'Add seats';
 
 // Default scenario mapping.
-$string['usedefault'] = 'Use default';
+$string['usedefault'] = 'Default';
 $string['mapalldefaults'] = 'Map all defaults';
 $string['mapalldefaults_desc'] = 'Create mappings for every unmapped AU that has a default scenario set in its RC5 config.';
 

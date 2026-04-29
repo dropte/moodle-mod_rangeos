@@ -265,6 +265,7 @@
                             Map
                         </button>
                         {{#scenarioname}}
+                        {{^defaultscenariomissing}}
                         <button class="btn btn-sm btn-primary"
                                 data-action="create-default-mapping"
                                 data-auid="{{auid}}"
@@ -273,6 +274,13 @@
                                 title="{{scenarioname}}">
                             {{#str}}usedefault, local_rangeos{{/str}}: {{scenarioname}}
                         </button>
+                        {{/defaultscenariomissing}}
+                        {{#defaultscenariomissing}}
+                        <button class="btn btn-sm btn-danger" disabled
+                                title="Scenario not found in this environment">
+                            {{#str}}usedefault, local_rangeos{{/str}}: {{scenarioname}}
+                        </button>
+                        {{/defaultscenariomissing}}
                         {{/scenarioname}}
                         {{/ismapped}}
                     {{/israngeos}}

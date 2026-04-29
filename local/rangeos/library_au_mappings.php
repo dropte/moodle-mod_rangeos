@@ -251,28 +251,29 @@ if ($envid > 0) {
             } while ($page < $totalpages);
         }
 
-        // Resolve scenario UUIDs to names.
-        if (!empty($scenariouuids)) {
-            $scenariopage = 0;
-            do {
-                $scenarioresponse = $client->list_content_scenarios([
-                    'page' => $scenariopage,
-                    'pageSize' => 100,
-                ]);
-                foreach ($scenarioresponse['data'] ?? [] as $s) {
-                    $s = (array) $s;
-                    $uuid = $s['uuid'] ?? '';
-                    if ($uuid && isset($scenariouuids[$uuid])) {
-                        $scenariolookup[$uuid] = $s['name'] ?? '';
-                    }
+        // Fetch all scenarios: resolve UUID→name for existing mappings and build
+        // name→UUID so we can check whether each AU's default scenario exists.
+        $scenariobynamelookup = []; // name => uuid
+        $scenariopage = 0;
+        do {
+            $scenarioresponse = $client->list_content_scenarios([
+                'page' => $scenariopage,
+                'pageSize' => 100,
+            ]);
+            foreach ($scenarioresponse['data'] ?? [] as $s) {
+                $s = (array) $s;
+                $uuid = $s['uuid'] ?? '';
+                $name = $s['name'] ?? '';
+                if ($uuid && isset($scenariouuids[$uuid])) {
+                    $scenariolookup[$uuid] = $name;
                 }
-                if (count($scenariolookup) >= count($scenariouuids)) {
-                    break;
+                if ($name && $uuid) {
+                    $scenariobynamelookup[$name] = $uuid;
                 }
-                $scenariopage++;
-                $scenariototal = $scenarioresponse['totalPages'] ?? 1;
-            } while ($scenariopage < $scenariototal);
-        }
+            }
+            $scenariopage++;
+            $scenariototal = $scenarioresponse['totalPages'] ?? 1;
+        } while ($scenariopage < $scenariototal);
     } catch (\Exception $e) {
         $error = $e->getMessage();
     }
@@ -433,12 +434,15 @@ foreach ($aus as $auid => $au) {
         $auidshort = '.../' . end($parts);
     }
 
+    $defaultscenariomissing = !empty($scenarioname) && !isset($scenariobynamelookup[$scenarioname]);
+
     $audata[] = [
         'auid' => $au->auid,
         'auid_short' => $auidshort,
         'title' => $au->title,
         'israngeos' => $israngeos,
         'scenarioname' => $scenarioname,
+        'defaultscenariomissing' => $defaultscenariomissing,
         'ismapped' => !empty($scenarios),
         'scenario_badges' => $scenariobadges,
         'scenario_count' => count($scenarios),
