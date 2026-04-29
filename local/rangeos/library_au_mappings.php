@@ -35,6 +35,117 @@ $packageid = optional_param('packageid', 0, PARAM_INT);
 $envid = optional_param('envid', 0, PARAM_INT);
 $showall = optional_param('showall', 0, PARAM_INT);
 
+// Handle bulk map-all-defaults action.
+$mapresults = null;
+if (optional_param('action', '', PARAM_ALPHA) === 'mapalldefaults') {
+    require_sesskey();
+
+    // Resolve envid to a usable value.
+    $actionenvid = $envid;
+    if ($actionenvid === 0) {
+        $default = environment_manager::get_default_environment();
+        if ($default) {
+            $actionenvid = $default->id;
+            $envid = $actionenvid;
+        }
+    }
+
+    $mapresults = ['created' => [], 'failed' => [], 'skipped' => 0];
+
+    if ($actionenvid > 0) {
+        $client = \local_rangeos\api_client::from_environment($actionenvid);
+
+        // Fetch all existing AU mappings to know which are already mapped.
+        $mappedauids = [];
+        $mappage = 0;
+        do {
+            $mapresponse = $client->list_au_mappings(['page' => $mappage, 'pageSize' => 100]);
+            foreach ($mapresponse['data'] ?? $mapresponse['items'] ?? $mapresponse as $m) {
+                $m = (array) $m;
+                $auid = $m['auId'] ?? $m['auid'] ?? '';
+                if ($auid) {
+                    $mappedauids[$auid] = true;
+                }
+            }
+            $mappage++;
+        } while ($mappage < ($mapresponse['totalPages'] ?? 1));
+
+        // Fetch all content scenarios for a name → UUID lookup.
+        $scenariobynamelookup = [];
+        $scpage = 0;
+        do {
+            $scresponse = $client->list_content_scenarios(['page' => $scpage, 'pageSize' => 100]);
+            foreach ($scresponse['data'] ?? [] as $s) {
+                $s = (array) $s;
+                if (!empty($s['name']) && !empty($s['uuid'])) {
+                    $scenariobynamelookup[$s['name']] = $s['uuid'];
+                }
+            }
+            $scpage++;
+        } while ($scpage < ($scresponse['totalPages'] ?? 1));
+
+        // Walk every package's latest-version AUs.
+        $packages = $DB->get_records('cmi5_packages', [], '', 'id, title, latestversion');
+        $seenauids = [];
+        foreach ($packages as $package) {
+            if (empty($package->latestversion)) {
+                continue;
+            }
+            $packageaus = $DB->get_records('cmi5_package_aus', ['versionid' => $package->latestversion], 'sortorder ASC');
+            foreach ($packageaus as $pau) {
+                $auid = $pau->auid ?? '';
+                if (!$auid || isset($seenauids[$auid])) {
+                    continue;
+                }
+                $seenauids[$auid] = true;
+
+                if (empty($pau->url)) {
+                    continue;
+                }
+                $config = content_patcher::get_au_config((int) $package->latestversion, $pau->url);
+                if ($config === null || empty($config['rangeosScenarioName'])) {
+                    continue;
+                }
+                $scenarioname = $config['rangeosScenarioName'];
+                $autitle = format_string($pau->title ?? $auid);
+
+                if (isset($mappedauids[$auid])) {
+                    $mapresults['skipped']++;
+                    continue;
+                }
+                if (!isset($scenariobynamelookup[$scenarioname])) {
+                    $mapresults['failed'][] = [
+                        'title'        => $autitle,
+                        'scenarioname' => $scenarioname,
+                        'reason'       => 'Scenario not found in this environment',
+                    ];
+                    continue;
+                }
+
+                try {
+                    $client->create_au_mapping($auid, $pau->title ?? '', [$scenariobynamelookup[$scenarioname]]);
+                    $mapresults['created'][] = [
+                        'title'        => $autitle,
+                        'scenarioname' => $scenarioname,
+                    ];
+                    $mappedauids[$auid] = true;
+                } catch (\Exception $e) {
+                    $mapresults['failed'][] = [
+                        'title'        => $autitle,
+                        'scenarioname' => $scenarioname,
+                        'reason'       => $e->getMessage(),
+                    ];
+                }
+            }
+        }
+    }
+
+    $mapresults['hascreated'] = !empty($mapresults['created']);
+    $mapresults['hasfailed']  = !empty($mapresults['failed']);
+    $mapresults['createdcount'] = count($mapresults['created']);
+    $mapresults['failedcount']  = count($mapresults['failed']);
+}
+
 $PAGE->set_context($context);
 $PAGE->set_url('/local/rangeos/library_au_mappings.php', ['packageid' => $packageid, 'envid' => $envid]);
 $PAGE->set_pagelayout('admin');
@@ -367,6 +478,14 @@ echo $OUTPUT->render_from_template('local_rangeos/library_au_mappings', [
     'haserror' => !empty($error),
     'baseurl' => $baseurl,
     'libraryurl' => (new moodle_url('/mod/cmi5/library.php'))->out(false),
+    'mapresults' => $mapresults,
+    'hasmapresults' => ($mapresults !== null),
+    'mapallurl' => (new moodle_url('/local/rangeos/library_au_mappings.php', [
+        'envid' => $envid,
+        'packageid' => $packageid,
+        'action' => 'mapalldefaults',
+        'sesskey' => sesskey(),
+    ]))->out(false),
 ]);
 
 echo $OUTPUT->footer();
