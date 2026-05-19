@@ -8,7 +8,7 @@
 <div data-baseurl="{{baseurl}}" data-versionid="{{versionid}}">
     {{#hasenvironments}}
     <div class="form-group row mb-3">
-        <label for="rangeos-env-select"  class="col-form-label mr-2" style="width:180px">
+        <label for="rangeos-env-select"  class="col-form-label mr-2" style="width:210px">
             {{#str}}selectenvironment, local_rangeos{{/str}}
         </label>
         <div class="col-auto">
@@ -29,7 +29,7 @@
 
     {{#haspackages}}
     <div class="form-group row mb-3">
-        <label for="rangeos-package-select"  class="col-form-label mr-2" style="width:180px">
+        <label for="rangeos-package-select"  class="col-form-label mr-2" style="width:210px">
             {{#str}}selectpackage, local_rangeos{{/str}}
         </label>
         <div class="col-auto">
@@ -158,10 +158,10 @@
     <table class="table table-striped table-sm">
         <thead>
             <tr>
-                <th style="width:5%">{{#str}}type, local_rangeos{{/str}}</th>
                 {{#showallmode}}
-                <th style="width:12%">Package</th>
+                <th style="width:8%">CMI5 Package</th>
                 {{/showallmode}}
+                <th style="width:9%">{{#str}}type, local_rangeos{{/str}}</th>
                 <th style="width:14%">{{#str}}au_title, local_rangeos{{/str}}</th>
                 <th style="width:14%">{{#str}}au_iri, local_rangeos{{/str}}</th>
                 <th style="width:7%">{{#str}}status, local_rangeos{{/str}}</th>
@@ -176,12 +176,6 @@
         <tbody>
             {{#aus}}
             <tr>
-                <td>
-                    <span class="badge badge-secondary mr-1">cmi5</span>
-                    {{#israngeos}}
-                    <span class="badge badge-primary" title="{{scenarioname}}">RangeOS</span>
-                    {{/israngeos}}
-                </td>
                 {{#showallmode}}
                 <td>
                     {{#haspackageinfo}}
@@ -192,6 +186,12 @@
                     {{/haspackageinfo}}
                 </td>
                 {{/showallmode}}
+                <td>
+                    <span class="badge badge-secondary mr-1">cmi5</span>
+                    {{#israngeos}}
+                    <span class="badge badge-primary" title="{{scenarioname}}">RangeOS</span>
+                    {{/israngeos}}
+                </td>
                 <td>
                     {{title}}
                     {{#israngeos}}{{#scenarioname}}

@@ -25,7 +25,7 @@ $string['rangeos:viewaumappings'] = 'View AU-to-scenario mappings';
 
 // Settings.
 $string['settings'] = 'RangeOS settings';
-$string['manageenvironments'] = 'Manage environments';
+$string['manageenvironments'] = 'Manage Environments';
 $string['manageaumappings'] = 'Manage AU mappings';
 
 // Environment management.
@@ -80,7 +80,7 @@ $string['manage_au_mappings'] = 'Manage AU-to-scenario mappings';
 // AU mapping management.
 $string['aumappings_global'] = 'AU Mappings (Global)';
 $string['aumappings_activity'] = 'AU Mappings';
-$string['au_iri'] = 'AU IRI';
+$string['au_iri'] = 'AU Id (IRI)';
 $string['au_title'] = 'AU Title';
 $string['type'] = 'Type';
 $string['mapping_name'] = 'Mapping name';
@@ -127,7 +127,7 @@ $string['library_aumappings_desc'] = 'Manage AU-to-scenario mappings across the 
 
 // Library AU mappings.
 $string['library_aumappings'] = 'Library AU Mappings';
-$string['selectpackage'] = 'Select package';
+$string['selectpackage'] = 'Select  RAPIDCMI5 package';
 
 // Class mode (config patching).
 $string['classmode'] = 'Class Mode';
